@@ -1,60 +1,90 @@
 #!/usr/bin/env node
+var utils = require('./utils');
+var status = require('./player/status');
 var Player = require('mpris-service');
 
-process.stdin.on('data', function(data) {
-  try {
-    var obj = JSON.parse(data);
-    if (obj.event === 'playing') {
-      player.metadata = {
-        'mpris:trackid': player.objectPath('track/0'),
-        'mpris:length': 60 * 1000 * 1000, // In microseconds
-        'mpris:artUrl': 'http://www.adele.tv/images/facebook/adele.jpg',
-        'xesam:title': obj.tabTitle,
-        'xesam:album': obj.subsystem,
-        'xesam:artist': obj.url
-      };
+var controls = {};
 
-      player.playbackStatus = 'Playing';
-    }
-  } catch (e) {
-  } finally {
-    process.stdout.write(data);
-  }
+var _log = utils._log;
+var player = null;
+
+function pause() {
+	player.playbackStatus = status.PAUSED;
+	process.stdout.write(controls.pause);
+}
+function play() {
+	player.playbackStatus = status.PLAYING;
+	process.stdout.write(controls.play);
+}
+
+function stop() {
+	player.playbackStatus = status.STOPPED;
+	process.stdout.write(controls.stop);
+}
+
+function _initPlayer() {
+	player = Player({
+		name: 'browser',
+		identity: 'Browser media player',
+		supportedUriSchemes: ['file'],
+		supportedMimeTypes: ['audio/mpeg', 'application/ogg'],
+		supportedInterfaces: ['player']
+	});
+
+	player.on('playpause', function() {
+		if (this.playbackStatus === status.STOPPED) {
+			play();
+		} else {
+			if (this.playbackStatus === status.PLAYING) pause();
+			else play();
+		}
+	});
+
+	player.on('play', play);
+	player.on('pause', pause);
+	player.on('stop', stop);
+	player.on('next', function() {
+		process.stdout.write(controls.next);
+	});
+	player.on('previous', function() {
+		process.stdout.write(controls.previous);
+	});
+}
+
+process.stdin.on('data', function(data) {
+	try {
+		var message = JSON.parse(utils.fixData(data.toJSON().data));
+		if (message.event === 'controls') {
+			controls[message.action] = data;
+		} else if (message.event === 'playing') {
+			if (player === null) {
+				_initPlayer();
+			}
+
+			player.metadata = {
+				'mpris:trackid': player.objectPath(
+					'track/' + message.url.split('=')[1]
+				),
+				'mpris:length': 60 * 1000 * 1000, // In microseconds
+				'mpris:artUrl': 'http://www.adele.tv/images/facebook/adele.jpg',
+				'xesam:title': message.tabTitle,
+				'xesam:album': message.subsystem,
+				'xesam:url': message.url
+			};
+
+			player.playbackStatus = 'Playing';
+
+		} else if (message.event === 'paused') {
+			pause();
+		} else if (message.event === 'gone') {
+			process.exit();
+		}
+	} catch (e) {
+		_log(e);
+		process.stdout.write(data);
+	}
 });
 
 process.stdin.on('end', () => {
-  process.stdout.end();
-});
-
-var player = Player({
-  name: 'nodejs',
-  identity: 'Node.js media player',
-  supportedUriSchemes: ['file'],
-  supportedMimeTypes: ['audio/mpeg', 'application/ogg'],
-  supportedInterfaces: ['player']
-});
-
-// Events
-var events = [
-  'raise',
-  'quit',
-  'next',
-  'previous',
-  'pause',
-  'playpause',
-  'stop',
-  'play',
-  'seek',
-  'position',
-  'open',
-  'volume'
-];
-events.forEach(function(eventName) {
-  player.on(eventName, function() {
-    console.log('Event:', eventName, arguments);
-  });
-});
-
-player.on('quit', function() {
-  process.exit();
+	process.stdout.end();
 });
